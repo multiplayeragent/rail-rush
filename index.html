@@ -1,0 +1,855 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rail Rush</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #9fd8ff; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; touch-action: none; }
+  .hud { position: fixed; pointer-events: none; text-shadow: 0 2px 4px #0009; font-weight: 800; }
+  #leg { top: max(10px, env(safe-area-inset-top)); left: max(14px, env(safe-area-inset-left)); font-size: 22px; line-height: 1.15; }
+  #leg small { display: block; font-size: 13px; font-weight: 700; opacity: .9; }
+  #panel { top: max(10px, env(safe-area-inset-top)); right: max(14px, env(safe-area-inset-right)); width: 168px; font-size: 13px; text-align: right; }
+  .bar { height: 12px; margin: 3px 0 6px; border-radius: 7px; background: #0005; overflow: hidden; box-shadow: 0 1px 3px #0005; }
+  .bar i { display: block; height: 100%; width: 0; border-radius: 7px; background: #52d273; }
+  #heatLabel.hot { color: #ffd23f; animation: blink .5s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: .35; } }
+  .chips { display: flex; justify-content: flex-end; gap: 6px; }
+  .chips span { padding: 2px 7px; border-radius: 9px; background: #0005; text-shadow: none; }
+  #net { bottom: max(10px, env(safe-area-inset-bottom)); left: max(14px, env(safe-area-inset-left)); font-size: 12px; font-weight: 600; opacity: .85; }
+  #act { bottom: calc(max(14px, env(safe-area-inset-bottom)) + 24px); left: 50%; transform: translateX(-50%); padding: 6px 14px; border-radius: 12px; background: #2a2238b0; font-size: 15px; white-space: nowrap; }
+  #act:empty { display: none; }
+  #count { inset: 0; display: grid; place-items: center; text-align: center; font-size: min(12vw, 76px); line-height: 1.05; color: #ffd23f; -webkit-text-stroke: 2px #5a2a00; }
+  #hint { top: 22%; left: 50%; transform: translateX(-50%); width: min(470px, calc(100vw - 32px)); box-sizing: border-box; text-align: center; font-size: 15px; font-weight: 700;
+          padding: 10px 14px; border-radius: 14px; background: #2a2238d9; transition: opacity .6s; }
+  #toast { top: 36%; left: 16px; right: 16px; text-align: center; font-size: 22px; opacity: 0; transition: opacity .3s; }
+  #toast.on { opacity: 1; }
+  #over { position: fixed; inset: 0; display: grid; place-items: center; background: #1d162a88; }
+  [hidden] { display: none !important; }
+  .card { box-sizing: border-box; width: min(380px, calc(100vw - 32px)); padding: 20px; border-radius: 18px; background: #2a2238; border: 1px solid #ffffff2a; text-align: center; box-shadow: 0 10px 30px #0006; }
+  .card h2 { margin: 0 0 4px; font-size: 23px; } .card h3 { margin: 12px 0 4px; font-size: 14px; color: #ffd23f; }
+  .card p { margin: 4px 0; font-size: 14px; opacity: .9; }
+  .card ol { text-align: left; margin: 0 0 12px; padding-left: 26px; font-size: 14px; min-height: 40px; } .card li span { float: right; font-variant-numeric: tabular-nums; }
+  button.go { width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #ffd23f; color: #3a2400; font: 800 17px system-ui, sans-serif; cursor: pointer; }
+  #use { position: fixed; right: max(18px, env(safe-area-inset-right)); bottom: max(22px, env(safe-area-inset-bottom)); width: 96px; height: 96px; border-radius: 50%;
+         border: 2px solid #ffffffaa; background: #2a223866; color: #fff; font: 800 15px system-ui, sans-serif; touch-action: none; }
+  #use.on { background: #ffd23f88; }
+  .touch #act { bottom: calc(max(22px, env(safe-area-inset-bottom)) + 108px); left: auto; right: max(10px, env(safe-area-inset-right)); transform: none; }
+  .attract .hud, .attract #use { display: none !important; }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+<script type="importmap">{ "imports": { "three": "./libs/three.module.min.js" } }</script>
+</head>
+<body>
+<div class="hud" id="leg"></div>
+<div class="hud" id="panel">
+  <div id="heatLabel">Engine heat</div><div class="bar" id="heatBar"><i></i></div>
+  <div class="chips"><span id="cWood"></span><span id="cStone"></span><span id="cTrack"></span></div>
+</div>
+<div class="hud" id="net">Connecting…</div>
+<div class="hud" id="act"></div>
+<div class="hud" id="count"></div>
+<div class="hud" id="hint"></div>
+<div class="hud" id="toast"></div>
+<button id="use" hidden>USE</button>
+<div id="over" hidden><div class="card">
+  <h2 id="overTitle"></h2><p id="overSub"></p>
+  <h3>Longest runs (tiles)</h3><ol id="board"><li>Loading…</li></ol>
+  <button class="go" id="again">Play again</button><p id="overNext"></p>
+</div></div>
+<script type="module">
+/* ═══ RAIL RUSH · a Multiplayer Agent starter ════════════════════════════════════════
+ * The train never stops: chop, mine, craft track and lay it ahead of it. Co-op, 1–4 players; bots help.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ train speed, heat, crafting, carrying, the map size, bots
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host
+ *   LAND .......... the seeded voxel map: grass, trees, rocks, water, cliffs, the station
+ *   TRAIN & TRACK . where the track goes, where the train is (from timestamps), heat
+ *   GAME (HOST) ... legs, crafting, what hit/water/deposit/cool/take/lay do. Host only.
+ *   BOTS (HOST) ... lumberjack, miner and builder bots. Host only.
+ *   SCENE ......... the 3D land, track, train, crew, particles
+ *   ME ............ walking, the USE button and what it does where you stand
+ *   HUD & RESULTS . heat bar, supplies, banners, results and the leaderboard
+ *   INPUT ......... keyboard, touch stick, USE button
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code):
+ *   - The HOST is the lowest sessionId among live players (heartbeat `hb` seen in the
+ *     last 3s), worked out every frame. The host's browser runs the train and the land.
+ *   - The host writes: `game` (ONE JSON field: id, v, phase, the track as a string of
+ *     moves, train speed + start time, heat + when it was cooled, the crafter's wood, stone
+ *     and finished track; `v` goes up on every write), `land` (the map, one letter per tile:
+ *     trees and rocks vanish as they are cut), `hands` (what each person and bot carries)
+ *     and `bots`. The train's position is worked out from timestamps, so it is never sent.
+ *   - Each player writes its OWN entity: `p` (position, facing, swinging ~12/s), `n`/`c`
+ *     (name, color) and `hb` once a second.
+ *   - Intents to the host: "hit" {x, z} (a tree or rock), "water" {x, z}, "deposit",
+ *     "cool", "take", "lay" {x, z} and "again". The host checks you are close enough and
+ *     updates `land`, `hands` and `game`. Its own actions apply directly.
+ *   - ?attract plays offline with bots only (the preview video is recorded from it).
+ *   - Leaderboard "rail-tiles": how far the train got before it stopped.
+ */
+import * as THREE from "three";
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  mapW: 36, mapD: 11,     // the map: tiles along the line × across it
+  stationX: 31,           // the station starts this far along
+  startTrack: 9,          // track already laid at the start of a leg
+  speed: 0.3,             // train speed, tiles/s (leg 1)...
+  speedUp: 0.05,          // ...plus this much each leg
+  heatSecs: 45,           // seconds from cool to boiling over (bring water!)
+  craftMs: 1100,          // the crafter turns 1 wood + 1 stone into 1 track in this time
+  stashMax: 6,            // finished track the wagon holds
+  startStash: 3,          // finished track at the start of a leg
+  carry: 3,               // most wood, stone or track one person carries
+  hits: { T: 2, R: 3 },   // hits to chop a tree / mine a rock
+  hitGapMs: 260,          // ms between hits while you hold USE
+  reach: 1.5,             // tiles: how far you can reach
+  walk: 3.8,              // walking speed, tiles/s
+  readyMs: 4000,          // the countdown before the train sets off
+  stationMs: 4500,        // the "station reached" banner
+  resultsMs: 14000,       // the results show this long, then a new run
+  seats: 4,               // bots fill the crew up to this many
+  botPace: 0.8,           // bots walk at this share of your speed
+  board: "rail-tiles",    // leaderboard name
+};
+const BOT_NAMES = ["Axel", "Rocky", "Sparks", "Cole", "Ivy", "Rusty"];
+const ROLES = ["lumber", "miner", "builder"]; // what each new bot prefers to do, in order
+const COLORS = ["#ff5a5a", "#4da6ff", "#ffd23f", "#52d273", "#c77dff", "#ff8c42", "#ff6fb5", "#3de0d0"];
+const KIND_OF = { T: "wood", R: "stone" };
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'rail-rush',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const QS = new URLSearchParams(location.search), ATTRACT = QS.has("attract");
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true,
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const mp = await Promise.race([MP.join({ ...MP_CONNECT }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+const parse = (v, fb) => { if (typeof v !== "string") return fb; try { return JSON.parse(v); } catch { return fb; } };
+let net = null, S = { entities: { players: {} }, shared: {} };
+const memo = new Map();
+/** A shared JSON field, parsed once per change (read-only: never mutate what this returns). */
+function shared(key, fallback, map = (v) => v) {
+  const raw = S.shared[key], m = memo.get(key);
+  if (m && m.raw === raw) return m.v;
+  const v = map(parse(raw, fallback));
+  memo.set(key, { raw, v });
+  return v;
+}
+const seenHb = new Map();
+/** Players whose heartbeat moved in the last 3s (plus us), sorted by sessionId. */
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+let wakeHold = 0, lastFrameAt = 0; // a tab whose frames stopped (frozen, or in the background) doesn't act as host, nor for 700ms after it wakes (see frame())
+const isHost = () => livePlayers()[0] === net.sessionId && performance.now() >= wakeHold && !(lastFrameAt && performance.now() - lastFrameAt > 1000);
+const humans = () => livePlayers().filter((id) => !(ATTRACT && id === net.sessionId));
+
+// ── LAND ────────────────────────────────────────────────────────────────────────────
+// One letter per tile, row by row (z), each row mapW long:
+//   . grass   T tree (wood)   R rock (stone)   W water   M cliff (can't be cut)   S station
+const MW = CONFIG.mapW, MD = CONFIG.mapD;
+const idx = (x, z) => z * MW + x;
+const inMap = (x, z) => x >= 0 && z >= 0 && x < MW && z < MD;
+const tileOf = (land, x, z) => (inMap(x, z) ? land[idx(x, z)] : "M");
+const solidCh = (ch) => ch === "T" || ch === "R" || ch === "W" || ch === "M";
+function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const hash = (x, z) => { let h = (x * 374761393 + z * 668265263) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+/** A new leg's map from a seed: clumps of trees and rocks, a pond or two, cliffs along the edges. */
+function makeLand(seed) {
+  const r = mulberry32(seed), g = Array.from({ length: MD }, () => new Array(MW).fill("."));
+  const zs = Math.floor(MD / 2), sx = CONFIG.stationX, zc = 2 + Math.floor(r() * (MD - 4));
+  const blob = (ch, cx, cz, rad) => { for (let z = 1; z < MD - 1; z++) for (let x = 0; x < MW; x++) if (Math.hypot(x - cx, z - cz) < rad + r() * 0.6 && g[z][x] === ".") g[z][x] = ch; };
+  for (let n = 0; n < 18; n++) blob(n % 2 ? "R" : "T", 4 + r() * (sx - 5), 1 + r() * (MD - 2), 0.7 + r() * 1.3);
+  for (let n = 0; n < 2; n++) blob("W", 10 + r() * (sx - 16), 2.5 + r() * (MD - 5), 0.9 + r() * 0.8);
+  for (let x = 0; x < MW; x++) { g[0][x] = g[MD - 1][x] = "M"; if (x > 6 && x < sx - 2) { if (r() < 0.3) g[1][x] = "M"; if (r() < 0.3) g[MD - 2][x] = "M"; } }
+  for (let x = 0; x < CONFIG.startTrack + 1; x++) g[zs][x] = "."; // the starting line is clear
+  for (let z = 1; z < MD - 1; z++) for (let x = sx - 1; x < MW; x++) g[z][x] = x >= sx && x < sx + 3 && Math.abs(z - zc) <= 1 ? "S" : x >= sx + 3 && r() < 0.5 ? "T" : ".";
+  for (const [x, z] of [[2, zs - 2], [3, zs - 2], [3, zs + 2], [5, zs + 2], [6, zs - 3]]) if (z > 0 && z < MD - 1) g[z][x] = x % 2 ? "T" : "R"; // a little to start with near the train
+  return { land: g.map((row) => row.join("")).join(""), zs };
+}
+
+// ── TRAIN & TRACK ───────────────────────────────────────────────────────────────────
+// The track is a start tile plus one letter per piece: E, W (along x), N, S (along z).
+const STEP = { E: [1, 0], W: [-1, 0], S: [0, 1], N: [0, -1] };
+const trackCache = { key: "", tiles: [], set: new Set() };
+function trackTiles(g) {
+  const key = g.zs + ":" + g.track;
+  if (trackCache.key !== key) {
+    const tiles = [[0, g.zs]];
+    for (const ch of g.track) { const [x, z] = tiles[tiles.length - 1], d = STEP[ch]; if (d) tiles.push([x + d[0], z + d[1]]); }
+    Object.assign(trackCache, { key, tiles, set: new Set(tiles.map(([x, z]) => idx(x, z))) });
+  }
+  return trackCache;
+}
+const trackEnd = (g) => { const t = trackTiles(g).tiles; return t[t.length - 1]; };
+/** Tiles where the next piece can go: next to the end, on grass or station, not already track. */
+function layable(g, land) {
+  const [ex, ez] = trackEnd(g), set = trackTiles(g).set, out = [];
+  for (const [ch, [dx, dz]] of Object.entries(STEP)) { const x = ex + dx, z = ez + dz, t = tileOf(land, x, z); if ((t === "." || t === "S") && !set.has(idx(x, z))) out.push({ x, z, ch }); }
+  return out;
+}
+/** How far along the track the engine is (tiles), from the start time: never sent, just computed. */
+function trainDist(g, t = Date.now()) { return g.phase === "run" ? g.d0 + g.speed * Math.max(0, t - g.t0) / 1000 : g.d0; }
+/** A point `d` tiles along the track: { x, z, a (heading) }. Past the end it keeps going straight (a derail). */
+function alongTrack(g, d) {
+  const tiles = trackTiles(g).tiles, n = tiles.length;
+  const i = Math.max(0, Math.min(n - 2, Math.floor(d))), f = d - i;
+  const [ax, az] = tiles[i], [bx, bz] = tiles[Math.min(n - 1, i + 1)];
+  const dx = bx - ax, dz = bz - az;
+  return { x: ax + 0.5 + dx * f, z: az + 0.5 + dz * f, a: Math.atan2(dz, dx) };
+}
+const WAGON_GAP = 1.15;
+const wagonAt = (g, k, t) => alongTrack(g, Math.max(0, trainDist(g, t) - k * WAGON_GAP)); // 0 engine, 1 crafter, 2 track wagon
+function heatOf(g, t = Date.now()) { return g.phase === "run" ? Math.min(100, g.heat0 + (100 / CONFIG.heatSecs) * Math.max(0, t - g.heatAt) / 1000) : g.heat0; }
+
+// ── GAME (HOST) ─────────────────────────────────────────────────────────────────────
+const host = { g: null, land: "", hands: {}, hp: new Map(), bots: new Map(), wasHost: false, dirtyG: false, dirtyL: false, dirtyH: false, lastG: 0, lastL: 0, lastH: 0, lastB: 0, path: null };
+const hosting = () => isHost() && host.wasHost && host.g; // wasHost: adopted (not leftovers from an earlier turn as host)
+const game = () => (hosting() ? host.g : shared("game", null));
+const land = () => (hosting() ? host.land : typeof S.shared.land === "string" ? S.shared.land : "");
+const hands = () => (hosting() ? host.hands : shared("hands", {}));
+const handOf = (id) => { const h = hands()[id]; return Array.isArray(h) ? { k: h[0], n: h[1] } : { k: "", n: 0 }; };
+const botList = () => (hosting() ? [...host.bots.values()].map((b) => ({ i: b.id, n: b.n, c: b.c, x: b.x, z: b.z, f: b.f, a: b.a ? 1 : 0, r: b.role })) : shared("bots", []));
+
+/** A new leg (the next station), or a new run from leg 1. */
+function newLeg(leg, done) {
+  const old = host.g, t = Date.now(), seed = ATTRACT ? 4242 + leg : (Math.random() * 1e9) | 0, m = makeLand(seed); // the preview always gets the same map
+  host.g = { id: (old?.id || 0) + 1, v: old?.v || 0, phase: "ready", leg, seed, zs: m.zs, track: "E".repeat(CONFIG.startTrack - 1), startAt: t + CONFIG.readyMs, endsAt: 0,
+    speed: CONFIG.speed + (leg - 1) * CONFIG.speedUp, d0: 2.4, t0: t + CONFIG.readyMs, heat0: 0, heatAt: t + CONFIG.readyMs,
+    wood: 0, stone: 0, stash: CONFIG.startStash, craftAt: 0, done, why: "" };
+  host.land = m.land; host.hands = {}; host.hp.clear();
+  for (const b of host.bots.values()) Object.assign(b, spawnSpot(b.slot), { task: null });
+  if (ATTRACT) attractSetup();
+  host.dirtyG = host.dirtyL = host.dirtyH = true;
+}
+/** Become host: take over the run exactly as state has it. */
+function adopt() {
+  host.g = parse(S.shared.game, null);
+  host.land = typeof S.shared.land === "string" ? S.shared.land : "";
+  host.hands = { ...parse(S.shared.hands, {}) };
+  host.bots.clear();
+  for (const b of parse(S.shared.bots, [])) host.bots.set(b.i, newBot(b.i, b.n, b.c, b.r, b.x, b.z, host.bots.size));
+  if (!host.g || host.land.length !== MW * MD) newLeg(1, 0);
+  host.dirtyG = true;
+}
+const posOf = (id) => { if (id === net.sessionId) return me; const b = host.bots.get(id); if (b) return b; return parse(S.entities.players[id]?.p, null); };
+const near = (p, x, z, d) => !!p && Math.hypot(p.x - x, p.z - z) <= d;
+const setHand = (id, k, n) => { if (k && n > 0) host.hands[id] = [k, n]; else delete host.hands[id]; host.dirtyH = true; };
+
+/** One intent from a crew member (a player, a bot or the host itself). */
+function applyIntent(type, m, from) {
+  const g = host.g, t = Date.now();
+  if (type === "again") { if (g.phase === "over") newLeg(1, 0); return; }
+  if (g.phase !== "run" && g.phase !== "ready") return;
+  m = m || {};
+  const who = posOf(from), said = Number.isFinite(m.px) && Number.isFinite(m.pz) ? { x: m.px, z: m.pz } : who;
+  if (!said || (who && Math.hypot(said.x - who.x, said.z - who.z) > 2.5)) return; // the message's spot must roughly match where they are
+  const h = { k: "", n: 0, ...(host.hands[from] ? { k: host.hands[from][0], n: host.hands[from][1] } : {}) };
+  const x = m.x | 0, z = m.z | 0, ch = tileOf(host.land, x, z), reachTile = near(said, x + 0.5, z + 0.5, CONFIG.reach + 0.7);
+  if (type === "hit") {
+    if ((ch !== "T" && ch !== "R") || !reachTile) return;
+    const k = idx(x, z), hp = (host.hp.get(k) ?? CONFIG.hits[ch]) - 1;
+    fx({ kind: ch === "T" ? "chop" : "mine", x: x + 0.5, z: z + 0.5 });
+    if (hp > 0) { host.hp.set(k, hp); return; }
+    host.hp.delete(k); host.land = host.land.slice(0, k) + "." + host.land.slice(k + 1); host.dirtyL = true;
+    const kind = KIND_OF[ch];
+    if (!h.k || (h.k === kind && h.n < CONFIG.carry)) setHand(from, kind, h.n + 1);
+  } else if (type === "water") {
+    if (ch !== "W" || !reachTile || h.k) return;
+    setHand(from, "water", 1); fx({ kind: "splash", x: x + 0.5, z: z + 0.5 });
+  } else if (type === "deposit") {
+    const c = wagonAt(g, 1, t);
+    if ((h.k !== "wood" && h.k !== "stone") || !near(said, c.x, c.z, 2.4)) return;
+    g[h.k] += h.n; setHand(from, "", 0); fx({ kind: "deposit", x: c.x, z: c.z });
+  } else if (type === "cool") {
+    const e = wagonAt(g, 0, t);
+    if (h.k !== "water" || !near(said, e.x, e.z, 2.4)) return;
+    g.heat0 = 0; g.heatAt = Math.max(t, g.heatAt); setHand(from, "", 0); fx({ kind: "cool", x: e.x, z: e.z });
+  } else if (type === "take") {
+    const w = wagonAt(g, 2, t);
+    if (!g.stash || (h.k && h.k !== "track") || h.n >= CONFIG.carry || !near(said, w.x, w.z, 2.4)) return;
+    const n = Math.min(CONFIG.carry - h.n, g.stash); g.stash -= n; setHand(from, "track", h.n + n);
+  } else if (type === "lay") {
+    const spot = layable(g, host.land).find((s) => s.x === x && s.z === z);
+    if (h.k !== "track" || !spot || !reachTile) return;
+    g.track += spot.ch; setHand(from, "track", h.n - 1); fx({ kind: "lay", x: x + 0.5, z: z + 0.5 });
+  }
+  host.dirtyG = true;
+}
+/** Effects every client shows (an event: sounds and chips, never the truth). */
+function fx(m) { net.send("fx", m); showFx(m); }
+
+function hostTick(dt, now) {
+  if (!host.wasHost) { host.wasHost = true; adopt(); }
+  const g = host.g, t = Date.now();
+  if (g.phase === "ready" && t >= g.startAt) { g.phase = "run"; host.dirtyG = true; }
+  if (g.phase === "run") {
+    const d = trainDist(g, t), tiles = trackTiles(g).tiles, [ex, ez] = tiles[Math.min(tiles.length - 1, Math.round(d))];
+    const stop = (phase, why, ms) => Object.assign(g, { phase, why, d0: Math.min(d, tiles.length - 1 + 0.4), heat0: heatOf(g, t), endsAt: t + ms });
+    if (tileOf(host.land, ex, ez) === "S") { stop("station", "", CONFIG.stationMs); fx({ kind: "station", x: ex, z: ez }); }
+    else if (d > tiles.length - 1 + 0.4) stop("over", "derail", CONFIG.resultsMs);
+    else if (heatOf(g, t) >= 100) stop("over", "heat", CONFIG.resultsMs);
+    if (g.phase !== "run") host.dirtyG = true;
+    // the crafter: 1 wood + 1 stone -> 1 track
+    if (g.craftAt && t >= g.craftAt) { g.craftAt = 0; g.stash++; host.dirtyG = true; }
+    if (!g.craftAt && g.wood > 0 && g.stone > 0 && g.stash < CONFIG.stashMax) { g.wood--; g.stone--; g.craftAt = t + CONFIG.craftMs; host.dirtyG = true; }
+  }
+  if (g.phase === "station" && t >= g.endsAt) newLeg(g.leg + 1, g.done + Math.floor(g.d0));
+  if (g.phase === "over" && t >= g.endsAt) newLeg(1, 0);
+  for (const id of Object.keys(host.hands)) if (!host.bots.has(id) && !S.entities.players[id]) setHand(id, "", 0); // people who left
+  botsTick(dt, t);
+  if (host.dirtyG && now - host.lastG > 120) { host.dirtyG = false; host.lastG = now; g.v = Math.max(g.v, shared("game", null)?.v || 0) + 1; net.setShared("game", JSON.stringify(g)); }
+  if (host.dirtyL && now - host.lastL > 150) { host.dirtyL = false; host.lastL = now; net.setShared("land", host.land); }
+  if (host.dirtyH && now - host.lastH > 100) { host.dirtyH = false; host.lastH = now; net.setShared("hands", JSON.stringify(host.hands)); }
+  if (now - host.lastB > 100) { host.lastB = now; net.setShared("bots", JSON.stringify(botList().map((b) => ({ ...b, x: +b.x.toFixed(2), z: +b.z.toFixed(2), f: +b.f.toFixed(2) })))); }
+}
+
+// ── BOTS (HOST) ─────────────────────────────────────────────────────────────────────
+const spawnSpot = (n) => { const g = host.g, zs = g ? g.zs : 5; return { x: 3.5 + (n % 3) * 1.4, z: zs + (n % 2 ? 1.5 : -1.5), f: 0 }; };
+function newBot(id, n, c, role, x, z, slot) { return { id, n, c, role, x, z, f: 0, a: 0, slot, task: null, wait: 0, hitAt: 0, prog: { x, z, at: 0 } }; }
+const isBrain = (id) => host.bots.has(id) || (ATTRACT && id === net.sessionId);
+function botsTick(dt, t) {
+  const want = Math.max(0, CONFIG.seats - humans().length);
+  while (host.bots.size < want) {
+    const used = new Set([...host.bots.values()].map((b) => b.n)), taken = new Set([myColor, ...Object.values(S.entities.players).map((p) => p.c), ...[...host.bots.values()].map((b) => b.c)]);
+    const roles = [...host.bots.values()].map((b) => b.role), role = ROLES.find((r) => !roles.includes(r)) || "builder";
+    const id = "b" + Math.random().toString(36).slice(2, 6), slot = host.bots.size + 1, s = spawnSpot(slot);
+    host.bots.set(id, newBot(id, BOT_NAMES.find((n) => !used.has(n)) || "Bot", COLORS.find((c) => !taken.has(c)) || COLORS[5], role, s.x, s.z, slot));
+  }
+  while (host.bots.size > want) { const id = [...host.bots.keys()].pop(); host.bots.delete(id); setHand(id, "", 0); }
+  if (host.g.phase !== "run" && host.g.phase !== "ready") return;
+  for (const b of host.bots.values()) brain(b, dt, t);
+}
+/** The best way from the end of the track to the station: grass is cheap, trees and rocks cost a bit (they must be cut). */
+function plannedPath(g, landStr) {
+  const key = g.track + "|" + landStr;
+  if (host.path && host.path.key === key) return host.path.steps;
+  const set = trackTiles(g).set, [ex, ez] = trackEnd(g), cost = new Map([[idx(ex, ez), 0]]), prev = new Map(), open = [[0, ex, ez]];
+  let goal = null;
+  while (open.length) {
+    open.sort((a, b) => a[0] - b[0]); const [c, x, z] = open.shift();
+    if (tileOf(landStr, x, z) === "S") { goal = [x, z]; break; }
+    for (const [dx, dz] of Object.values(STEP)) {
+      const nx = x + dx, nz = z + dz, ch = tileOf(landStr, nx, nz), k = idx(nx, nz);
+      if (!inMap(nx, nz) || ch === "W" || ch === "M" || set.has(k)) continue;
+      const nc = c + (ch === "T" || ch === "R" ? 3.5 : 1) + Math.abs(nz - g.zs) * 0.05;
+      if (nc < (cost.get(k) ?? 1e9)) { cost.set(k, nc); prev.set(k, [x, z]); open.push([nc, nx, nz]); }
+    }
+  }
+  const steps = [];
+  for (let p = goal; p && !(p[0] === ex && p[1] === ez); p = prev.get(idx(p[0], p[1]))) steps.unshift(p);
+  host.path = { key, steps };
+  return steps;
+}
+/** One bot's brain (or, in the preview, yours): keep the train fed, cooled and on track. */
+function brain(b, dt, t) {
+  const g = host.g, L = host.land, h = handOf(b.id);
+  b.a = Math.max(0, b.a - dt); b.moving = false;
+  if (b.wait > 0) { b.wait -= dt; return; }
+  const act = (type, m = {}) => { applyIntent(type, { ...m, px: b.x, pz: b.z }, b.id); };
+  const heat = heatOf(g, t), engine = wagonAt(g, 0, t);
+  // carrying water: to the engine
+  if (h.k === "water") { if (goNear(b, engine.x, engine.z, 1.6, dt)) { act("cool"); b.wait = 0.3; } return; }
+  // the engine is getting hot and nobody has water: fetch some (builders first)
+  const fetching = [...host.bots.values(), me].some((o) => o !== b && (handOf(o.id || net.sessionId).k === "water" || (o.task && o.task.water)));
+  if (heat > 55 && !fetching && !h.k && (b.role === "builder" || heat > 75)) {
+    const w = nearestTile(b, (ch) => ch === "W");
+    if (w) { b.task = { water: true }; if (goNear(b, w.x + 0.5, w.z + 0.5, 1.2, dt, true)) { act("water", { x: w.x, z: w.z }); b.task = null; b.wait = 0.3; } return; }
+  }
+  if (b.task && b.task.water) b.task = null;
+  // carrying wood or stone: to the crafter once full (or nothing of that kind is close)
+  if (h.k === "wood" || h.k === "stone") {
+    const more = h.n < CONFIG.carry && nearestTile(b, (ch) => KIND_OF[ch] === h.k, 4);
+    if (more) { hitTile(b, more, dt, act); return; }
+    const c = wagonAt(g, 1, t);
+    if (goNear(b, c.x, c.z, 1.5, dt)) { act("deposit"); b.wait = 0.3; }
+    return;
+  }
+  // carrying track: lay it along the planned path (clearing a tree or rock in the way)
+  if (h.k === "track") {
+    const next = plannedPath(g, L)[0];
+    if (!next) return;
+    const ch = tileOf(L, next[0], next[1]);
+    if (ch === "T" || ch === "R") { hitTile(b, { x: next[0], z: next[1] }, dt, act); return; }
+    if (goNear(b, next[0] + 0.5, next[1] + 0.5, 1.1, dt, true)) { act("lay", { x: next[0], z: next[1] }); b.wait = 0.35; b.a = 0.3; }
+    return;
+  }
+  // empty hands
+  const need = g.wood + countHands("wood") <= g.stone + countHands("stone") ? "wood" : "stone";
+  const builderWork = g.stash > 0 && (b.role === "builder" || !anyRole("builder", b));
+  if (builderWork) { const w = wagonAt(g, 2, t); if (goNear(b, w.x, w.z, 1.5, dt)) { act("take"); b.wait = 0.3; } return; }
+  const kind = b.role === "lumber" ? (g.wood > g.stone + 3 ? "stone" : "wood") : b.role === "miner" ? (g.stone > g.wood + 3 ? "wood" : "stone") : need;
+  const target = nearestTile(b, (ch) => KIND_OF[ch] === kind) || nearestTile(b, (ch) => !!KIND_OF[ch]);
+  if (target) hitTile(b, target, dt, act);
+}
+const countHands = (k) => Object.values(host.hands).reduce((n, h) => n + (h[0] === k ? h[1] : 0), 0);
+const anyRole = (role, not) => [...host.bots.values()].some((o) => o !== not && o.role === role);
+/** Walk next to a tree or rock and swing at it. */
+function hitTile(b, tile, dt, act) {
+  if (goNear(b, tile.x + 0.5, tile.z + 0.5, 1.15, dt, true)) {
+    b.f = Math.atan2(tile.z + 0.5 - b.z, tile.x + 0.5 - b.x);
+    if (performance.now() - b.hitAt > CONFIG.hitGapMs * 1.25) { b.hitAt = performance.now(); act("hit", { x: tile.x, z: tile.z }); b.a = 0.25; }
+  }
+}
+/** The nearest tile matching `want` that the bot can walk up to, preferring ones near the track end (that's where the work is). */
+function nearestTile(b, want, maxD = 99) {
+  const L = host.land, [ex] = trackEnd(host.g), steps = walkMap(L, b.x, b.z); let best = null, bd = 1e9;
+  for (let z = 0; z < MD; z++) for (let x = 0; x < MW; x++) {
+    if (!want(L[idx(x, z)])) continue;
+    let d = 1e9; for (const [dx, dz] of Object.values(STEP)) { const w = steps.get(idx(x + dx, z + dz)); if (w !== undefined && inMap(x + dx, z + dz)) d = Math.min(d, w + 1); }
+    if (d > maxD + 1) continue;
+    const score = d + Math.max(0, x - ex - 4) * 0.6 + Math.max(0, ex - 8 - x) * 0.4;
+    if (score < bd) { bd = score; best = { x, z }; }
+  }
+  return best;
+}
+/** Walking steps from (x, z) to every open tile it can reach. */
+function walkMap(L, x, z) {
+  const from = idx(Math.floor(x), Math.floor(z)), dist = new Map([[from, 0]]), q = [from];
+  for (let i = 0; i < q.length; i++) { const c = q[i], cx = c % MW, cz = (c / MW) | 0; for (const [dx, dz] of Object.values(STEP)) { const ax = cx + dx, az = cz + dz, k = idx(ax, az); if (inMap(ax, az) && !solidCh(L[k]) && !dist.has(k)) { dist.set(k, dist.get(c) + 1); q.push(k); } } }
+  return dist;
+}
+/** Walk toward (tx, tz) through open ground; true once within `close`. `solidGoal`: the goal tile itself can't be stood on. */
+function goNear(b, tx, tz, close, dt, solidGoal) {
+  const d = Math.hypot(tx - b.x, tz - b.z);
+  if (d < close) return true;
+  let wp = { x: tx, z: tz };
+  if (d > 1.2) wp = nextStep(b.x, b.z, tx, tz, solidGoal);
+  const dx = wp.x - b.x, dz = wp.z - b.z, dd = Math.hypot(dx, dz) || 1, step = Math.min(dd, CONFIG.walk * (b === me ? 0.9 : CONFIG.botPace) * dt);
+  moveBody(b, (dx / dd) * step, (dz / dd) * step);
+  b.f = Math.atan2(dz, dx); b.moving = true;
+  const now = performance.now(); // stuck for 2s: think again
+  if (Math.hypot(b.x - b.prog.x, b.z - b.prog.z) > 0.3) b.prog = { x: b.x, z: b.z, at: now }; else if (!b.prog.at) b.prog.at = now;
+  if (now - b.prog.at > 2000) { b.prog.at = now; b.task = null; b.wait = 0.3; }
+  return false;
+}
+/** The next tile centre on the shortest walk to the tile at (tx, tz) (or next to it, if it is solid). */
+function nextStep(x, z, tx, tz, solidGoal) {
+  const L = land(), gk = idx(Math.floor(tx), Math.floor(tz)), from = idx(Math.floor(x), Math.floor(z)), dist = new Map(), q = [];
+  const open = (k) => !solidCh(L[k]);
+  if (solidGoal || !open(gk)) { for (const [dx, dz] of Object.values(STEP)) { const ax = Math.floor(tx) + dx, az = Math.floor(tz) + dz; if (inMap(ax, az) && open(idx(ax, az))) { dist.set(idx(ax, az), 0); q.push(idx(ax, az)); } } }
+  else { dist.set(gk, 0); q.push(gk); }
+  for (let i = 0; i < q.length; i++) { const c = q[i], cx = c % MW, cz = (c / MW) | 0; for (const [dx, dz] of Object.values(STEP)) { const ax = cx + dx, az = cz + dz, k = idx(ax, az); if (inMap(ax, az) && open(k) && !dist.has(k)) { dist.set(k, dist.get(c) + 1); q.push(k); } } }
+  if (dist.get(from) === 0) return { x: tx, z: tz };
+  const cx = Math.floor(x), cz = Math.floor(z); let best = null, bd = dist.get(from) ?? 1e9;
+  for (const [dx, dz] of Object.values(STEP)) { const d = dist.get(idx(cx + dx, cz + dz)); if (d !== undefined && d < bd && inMap(cx + dx, cz + dz)) { bd = d; best = { x: cx + dx + 0.5, z: cz + dz + 0.5 }; } }
+  return best || { x: tx, z: tz };
+}
+/** ?attract: start mid-leg with track laid partway, supplies on board and everyone working. */
+function attractSetup() {
+  const g = host.g, t = Date.now();
+  Object.assign(g, { phase: "run", startAt: t, t0: t, heatAt: t - 15000, wood: 1, stone: 2, stash: 2, speed: 0.4 });
+  for (let k = 0; k < 6; k++) { const next = plannedPath(g, host.land)[0]; if (!next || "TR".includes(tileOf(host.land, next[0], next[1]))) break; g.track += layable(g, host.land).find((s) => s.x === next[0] && s.z === next[1]).ch; }
+  g.d0 = 5;
+}
+
+// ── SCENE ───────────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color("#9fd8ff"); scene.fog = new THREE.Fog("#9fd8ff", 30, 70);
+const camera = new THREE.PerspectiveCamera(40, 1, 0.5, 200);
+scene.add(new THREE.HemisphereLight("#ffffff", "#6a8a5a", 1.7));
+const sun = new THREE.DirectionalLight("#fff3dc", 1.7); sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024);
+Object.assign(sun.shadow.camera, { left: -16, right: 16, top: 12, bottom: -12, near: 1, far: 60 }); scene.add(sun, sun.target);
+function canvasTex(w, h, paint) { const c = document.createElement("canvas"); c.width = w; c.height = h; paint(c.getContext("2d"), w, h); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; }
+const mats = new Map();
+const mat = (color, glow = 0) => { const k = color + glow; if (!mats.has(k)) mats.set(k, new THREE.MeshLambertMaterial({ color, emissive: glow ? color : "#000", emissiveIntensity: glow })); return mats.get(k); };
+function mesh(geo, material, x, y, z, parent, shadow = true) { const m = new THREE.Mesh(geo, material); m.position.set(x, y, z); m.castShadow = shadow; m.receiveShadow = true; parent.add(m); return m; }
+const BOX = new THREE.BoxGeometry(1, 1, 1), white = new THREE.MeshLambertMaterial({ color: "#ffffff" });
+function instanced(n, material = white, shadow = true) { const m = new THREE.InstancedMesh(BOX, material, n); m.castShadow = shadow; m.receiveShadow = true; m.count = 0; m.frustumCulled = false; m.setColorAt(0, new THREE.Color("#fff")); scene.add(m); return m; }
+const m4 = new THREE.Matrix4(), q4 = new THREE.Quaternion(), v3 = new THREE.Vector3(), s3 = new THREE.Vector3(), col = new THREE.Color(), UP = new THREE.Vector3(0, 1, 0);
+/** One box instance: centre (x, y, z), size (sx, sy, sz), turned `ry` around the vertical, colored. */
+function put(im, i, x, y, z, sx, sy, sz, color, ry = 0) { q4.setFromAxisAngle(UP, ry); m4.compose(v3.set(x, y, z), q4, s3.set(sx, sy, sz)); im.setMatrixAt(i, m4); im.setColorAt(i, col.set(color)); }
+const ground = instanced(MW * MD, white, false), props = instanced(MW * MD * 4), water = instanced(MW * MD, new THREE.MeshLambertMaterial({ color: "#ffffff", transparent: true, opacity: 0.8 }), false);
+const rails = instanced(600), ghost = mesh(new THREE.BoxGeometry(0.96, 0.08, 0.96), new THREE.MeshBasicMaterial({ color: "#7dff9a", transparent: true, opacity: 0.55 }), 0, 0.05, 0, scene, false);
+const slab = mesh(new THREE.BoxGeometry(MW, 3, MD), mat("#7a5a3a"), MW / 2, -2.85, MD / 2, scene, false); // the dirt under the map
+slab.receiveShadow = false;
+const station = new THREE.Group(); scene.add(station);
+/** Rebuild the land's boxes (only when `land` changes). */
+let builtLand = "";
+function buildLand(L, g) {
+  if (L === builtLand || L.length !== MW * MD) return;
+  builtLand = L; let ni = 0, wi = 0;
+  for (let z = 0; z < MD; z++) for (let x = 0; x < MW; x++) {
+    const ch = L[idx(x, z)], hv = hash(x, z), cx = x + 0.5, cz = z + 0.5;
+    if (ch === "W") { put(ground, idx(x, z), cx, -0.8, cz, 1, 1, 1, "#3d7fb8"); put(water, wi++, cx, -0.18, cz, 1, 0.1, 1, "#4fb3ff"); continue; }
+    put(ground, idx(x, z), cx, -0.5, cz, 1, 1, 1, ch === "S" ? "#d9c9a8" : ch === "M" ? "#6b7f4f" : (x + z) % 2 ? "#7cc95a" : "#72bf51");
+    if (ch === "T") { // a voxel tree: trunk, crown, top
+      const s = 0.85 + hv * 0.3;
+      put(props, ni++, cx, 0.3, cz, 0.26, 0.6, 0.26, "#8a5a32");
+      put(props, ni++, cx, 0.85 * s, cz, 0.84 * s, 0.62 * s, 0.84 * s, hv > 0.5 ? "#3f9a45" : "#4caf50", hv);
+      put(props, ni++, cx, 1.28 * s, cz, 0.5 * s, 0.4 * s, 0.5 * s, "#66c26a", hv);
+    } else if (ch === "R") { // a rock: a big and a small block
+      put(props, ni++, cx, 0.28, cz, 0.8, 0.56, 0.74, hv > 0.6 ? "#7d8691" : "#8f98a3", hv * 2);
+      put(props, ni++, cx + 0.22, 0.62, cz - 0.1, 0.42, 0.34, 0.4, "#a9b1bb", hv * 3);
+    } else if (ch === "M") { // cliffs: tall at the back, low at the front (so they never hide the line), some with snow
+      const hgt = z === 0 ? 1.0 + hv * 1.2 : z === MD - 1 ? 0.35 + hv * 0.4 : 0.6 + hv * 0.8;
+      put(props, ni++, cx, hgt / 2, cz, 1, hgt, 1, hv > 0.5 ? "#8a8f99" : "#7c818c");
+      if (hgt > 1.9) put(props, ni++, cx, hgt + 0.06, cz, 0.9, 0.14, 0.9, "#f4f8fb");
+    }
+  }
+  ground.count = MW * MD; props.count = ni; water.count = wi;
+  for (const m of [ground, props, water]) { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; }
+  // the station: a platform with a roof over its tiles (rebuilt only for a new leg)
+  const sTiles = []; for (let z = 0; z < MD; z++) for (let x = 0; x < MW; x++) if (L[idx(x, z)] === "S") sTiles.push([x, z]);
+  const sKey = (g ? g.id : 0) + ":" + sTiles.join(";");
+  if (sTiles.length && station.userData.key !== sKey) {
+    station.userData.key = sKey; station.clear();
+    const minX = Math.min(...sTiles.map((t) => t[0])), maxZ = Math.max(...sTiles.map((t) => t[1])), minZ = Math.min(...sTiles.map((t) => t[1]));
+    for (const [px, pz] of [[minX + 0.2, minZ + 0.2], [minX + 2.8, minZ + 0.2], [minX + 0.2, maxZ + 0.8], [minX + 2.8, maxZ + 0.8]]) mesh(new THREE.BoxGeometry(0.14, 1.6, 0.14), mat("#ffffff"), px, 0.8, pz, station);
+    mesh(new THREE.BoxGeometry(3.3, 0.18, maxZ - minZ + 1.4), mat("#e8443a"), minX + 1.5, 1.68, (minZ + maxZ + 1) / 2, station);
+    const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTex(256, 64, (c) => { c.fillStyle = "#2a2238"; c.fillRect(0, 0, 256, 64); c.fillStyle = "#ffd23f"; c.font = "bold 34px system-ui"; c.textAlign = "center"; c.fillText(`STATION ${g ? g.leg : 1}`, 128, 44); }) }));
+    sign.scale.set(3, 0.75, 1); sign.position.set(minX + 1.5, 2.3, (minZ + maxZ + 1) / 2); station.add(sign);
+  }
+}
+/** Rebuild the track's rails and sleepers (only when the track changes). Each tile gets half-rails toward its neighbours, so corners join. */
+let builtTrack = "";
+function buildTrack(g) {
+  const key = g.zs + ":" + g.track; if (key === builtTrack) return; builtTrack = key;
+  const tiles = trackTiles(g).tiles; let n = 0;
+  tiles.forEach(([x, z], i) => {
+    const nbs = [tiles[i - 1], tiles[i + 1]].filter(Boolean);
+    if (nbs.length === 1) nbs.push([2 * x - nbs[0][0], 2 * z - nbs[0][1]]); // the ends run straight on
+    for (const [nx, nz] of nbs) {
+      const dx = nx - x, dz = nz - z, a = -Math.atan2(dz, dx), px = -dz, pz = dx;
+      for (const s of [0.15, 0.4]) if (n < 600) put(rails, n++, x + 0.5 + dx * s, 0.04, z + 0.5 + dz * s, 0.14, 0.07, 0.86, "#8a5a32", a);
+      for (const side of [-0.24, 0.24]) if (n < 600) put(rails, n++, x + 0.5 + dx * 0.25 + px * side, 0.11, z + 0.5 + dz * 0.25 + pz * side, 0.54, 0.07, 0.07, "#b9c2cc", a);
+    }
+  });
+  rails.count = n; rails.instanceMatrix.needsUpdate = true; if (rails.instanceColor) rails.instanceColor.needsUpdate = true;
+}
+// The train: an engine, the crafter wagon and the track wagon.
+function wagon(body, trim) { const g = new THREE.Group(), inner = new THREE.Group(); g.add(inner); mesh(new THREE.BoxGeometry(1.0, 0.18, 0.66), mat("#2b2f36"), 0, 0.2, 0, inner); for (const sx of [-0.3, 0.3]) for (const sz of [-0.3, 0.3]) mesh(new THREE.BoxGeometry(0.22, 0.22, 0.08), mat("#1b1d22"), sx, 0.12, sz, inner); mesh(new THREE.BoxGeometry(0.96, 0.36, 0.64), mat(body), 0, 0.47, 0, inner); mesh(new THREE.BoxGeometry(1.0, 0.06, 0.68), mat(trim), 0, 0.67, 0, inner); scene.add(g); return { g, inner }; }
+const engine = wagon("#e8443a", "#ffd23f"), crafter = wagon("#3f9a45", "#2b6e30"), stashW = wagon("#3d7fb8", "#24557e");
+mesh(new THREE.BoxGeometry(0.62, 0.42, 0.5), mat("#2b2f36"), 0.18, 0.9, 0, engine.inner); // boiler
+mesh(new THREE.BoxGeometry(0.34, 0.62, 0.62), mat("#c7372e"), -0.3, 0.98, 0, engine.inner); // cab
+mesh(new THREE.BoxGeometry(0.4, 0.06, 0.7), mat("#2b2f36"), -0.3, 1.32, 0, engine.inner);
+const chimney = mesh(new THREE.BoxGeometry(0.16, 0.36, 0.16), mat("#2b2f36"), 0.36, 1.26, 0, engine.inner);
+const heatGlow = mesh(new THREE.BoxGeometry(0.64, 0.44, 0.52), new THREE.MeshBasicMaterial({ color: "#ff3b1f", transparent: true, opacity: 0 }), 0.18, 0.9, 0, engine.inner, false);
+const cargo = { wood: [], stone: [], track: [] };
+for (let i = 0; i < 6; i++) { cargo.wood.push(mesh(new THREE.BoxGeometry(0.38, 0.12, 0.12), mat("#a0703f"), -0.25, 0.74 + Math.floor(i / 3) * 0.13, -0.2 + (i % 3) * 0.2, crafter.inner)); cargo.stone.push(mesh(new THREE.BoxGeometry(0.17, 0.15, 0.17), mat("#9aa3ad"), 0.22 + (i % 2) * 0.2, 0.75 + Math.floor(i / 4) * 0.15, -0.18 + (Math.floor(i / 2) % 3) * 0.18, crafter.inner)); cargo.track.push(mesh(new THREE.BoxGeometry(0.8, 0.07, 0.5), mat(i % 2 ? "#8a5a32" : "#b9c2cc"), 0, 0.73 + i * 0.08, 0, stashW.inner)); }
+const gear = mesh(new THREE.BoxGeometry(0.3, 0.3, 0.08), mat("#ffd23f"), 0, 1.05, 0.34, crafter.inner);
+const trainParts = [engine, crafter, stashW];
+// The crew: voxel people with whatever they carry in front of them.
+const crew = new Map();
+function makePerson(color, name) {
+  const g = new THREE.Group(), body = new THREE.Group(); g.add(body);
+  mesh(new THREE.CircleGeometry(0.34, 14), new THREE.MeshBasicMaterial({ color: "#000", transparent: true, opacity: 0.2, depthWrite: false }), 0, 0.02, 0, g, false).rotation.x = -Math.PI / 2;
+  const legs = [-0.1, 0.1].map((s) => mesh(new THREE.BoxGeometry(0.13, 0.32, 0.14), mat("#3a3a4a"), s, 0.16, 0, body));
+  mesh(new THREE.BoxGeometry(0.42, 0.42, 0.28), mat(color), 0, 0.53, 0, body);
+  mesh(new THREE.BoxGeometry(0.34, 0.32, 0.32), mat("#ffd9b8"), 0, 0.92, 0, body);
+  mesh(new THREE.BoxGeometry(0.38, 0.1, 0.36), mat(color), 0, 1.1, 0, body);
+  for (const s of [-0.08, 0.08]) mesh(new THREE.BoxGeometry(0.05, 0.06, 0.02), mat("#222"), s, 0.95, 0.165, body, false);
+  const arm = new THREE.Group(); arm.position.set(0.27, 0.68, 0); body.add(arm);
+  mesh(new THREE.BoxGeometry(0.11, 0.34, 0.11), mat(color), 0, -0.14, 0, arm);
+  const tool = mesh(new THREE.BoxGeometry(0.06, 0.06, 0.4), mat("#8a5a32"), 0, -0.3, 0.16, arm); mesh(new THREE.BoxGeometry(0.2, 0.12, 0.08), mat("#cfd6e0"), 0, 0, 0.18, tool);
+  const load = new THREE.Group(); load.position.set(0, 0.62, 0.32); body.add(load);
+  if (name) { const tex = canvasTex(256, 64, (c) => { c.font = "bold 30px system-ui"; c.textAlign = "center"; c.lineWidth = 6; c.strokeStyle = "#000a"; c.strokeText(name, 128, 44); c.fillStyle = "#fff"; c.fillText(name, 128, 44); }); const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false })); tag.scale.set(2.2, 0.55, 1); tag.position.y = 1.6; g.add(tag); }
+  scene.add(g); return { g, body, legs, arm, load, loadKey: "", x: 0, z: 0, f: 0, fresh: true };
+}
+const LOAD_LOOK = { wood: [0.36, 0.13, 0.13, "#a0703f"], stone: [0.2, 0.17, 0.2, "#9aa3ad"], track: [0.5, 0.06, 0.34, "#b9c2cc"], water: [0.26, 0.24, 0.26, "#4fb3ff"] };
+function showLoad(p, h) {
+  const key = h.k + h.n; if (p.loadKey === key) return; p.loadKey = key; p.load.clear();
+  const L = LOAD_LOOK[h.k]; if (!L) return;
+  for (let i = 0; i < h.n; i++) mesh(new THREE.BoxGeometry(L[0], L[1], L[2]), mat(h.k === "track" && i % 2 ? "#8a5a32" : L[3]), 0, i * (L[1] + 0.02), 0, p.load);
+}
+function placePerson(p, x, z, f, acting, moving, dt, now) {
+  if (p.fresh) { p.x = x; p.z = z; p.f = f; p.fresh = false; }
+  const k = 1 - Math.pow(0.0008, dt); p.x += (x - p.x) * k; p.z += (z - p.z) * k; p.f += Math.atan2(Math.sin(f - p.f), Math.cos(f - p.f)) * k;
+  p.g.position.set(p.x, 0, p.z); p.g.rotation.y = Math.PI / 2 - p.f;
+  const w = moving ? Math.sin(now / 90) : 0; p.legs[0].rotation.x = w * 0.6; p.legs[1].rotation.x = -w * 0.6; p.body.position.y = Math.abs(w) * 0.04;
+  p.arm.rotation.x = acting ? -1.6 + Math.abs(Math.sin(now / 70)) * 1.8 : p.loadKey ? -1.2 : w * 0.5;
+}
+// Particles: little cubes (chips, sparks, splashes, smoke).
+const PMAX = 400, parts = [], dummy = new THREE.Object3D();
+const pMesh = new THREE.InstancedMesh(BOX, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.9 }), PMAX);
+pMesh.setColorAt(0, new THREE.Color("#fff")); pMesh.count = 0; pMesh.frustumCulled = false; scene.add(pMesh);
+function burst(x, y, z, color, n = 10, speed = 3, size = 0.1, up = 1, grav = 9) { for (let i = 0; i < n && parts.length < PMAX; i++) { const a = Math.random() * 6.28, u = Math.random(); parts.push({ x, y, z, vx: Math.cos(a) * speed * u, vy: speed * up * (0.4 + Math.random()), vz: Math.sin(a) * speed * u, life: 0, max: 0.5 + Math.random() * 0.5, size, g: grav, color: new THREE.Color(color) }); } }
+function partsTick(dt) {
+  let n = 0;
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i]; p.life += dt; if (p.life >= p.max) { parts.splice(i, 1); continue; }
+    p.vy -= p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+    dummy.position.set(p.x, p.y, p.z); dummy.scale.setScalar(p.size * (1 - (p.life / p.max) * 0.6)); dummy.rotation.set(p.life * 5, p.life * 3, 0); dummy.updateMatrix();
+    pMesh.setMatrixAt(n, dummy.matrix); pMesh.setColorAt(n, p.color); n++;
+  }
+  pMesh.count = n; pMesh.instanceMatrix.needsUpdate = true; if (pMesh.instanceColor) pMesh.instanceColor.needsUpdate = true;
+}
+function showFx(m) {
+  if (!m || !Number.isFinite(m.x) || !Number.isFinite(m.z)) return;
+  if (m.kind === "chop") { burst(m.x, 0.7, m.z, "#a0703f", 6, 2.5, 0.09); burst(m.x, 1, m.z, "#4caf50", 4, 2, 0.12); sfx(300, 0.06); }
+  if (m.kind === "mine") { burst(m.x, 0.5, m.z, "#a9b1bb", 7, 3, 0.09); burst(m.x, 0.6, m.z, "#ffd23f", 3, 4, 0.05); sfx(520, 0.05); }
+  if (m.kind === "splash") burst(m.x, 0.1, m.z, "#7cc8ff", 12, 2.5, 0.08);
+  if (m.kind === "cool") { burst(m.x, 1.2, m.z, "#ffffff", 22, 2, 0.2, 1, -1); sfx(200, 0.2); }
+  if (m.kind === "deposit") { burst(m.x, 1, m.z, "#ffd23f", 8, 2, 0.08); sfx(660, 0.08); }
+  if (m.kind === "lay") { burst(m.x, 0.2, m.z, "#e8dcc8", 10, 2, 0.1); sfx(440, 0.08); }
+  if (m.kind === "station") { burst(m.x + 0.5, 1.5, m.z + 0.5, "#ffd23f", 40, 5, 0.14); sfx(880, 0.3); }
+}
+
+// ── ME ──────────────────────────────────────────────────────────────────────────────
+const myName = (() => { try { return localStorage.getItem("mpa-name") || ""; } catch { return ""; } })() ||
+  ["Brave", "Steady", "Speedy", "Sunny", "Lucky", "Mighty"][Math.floor(Math.random() * 6)] + " " + ["Driver", "Stoker", "Digger", "Builder", "Conductor"][Math.floor(Math.random() * 5)];
+let myColor = COLORS[0]; // picked on join: the first color nobody in the room (or a bot) has
+const me = { id: "", x: 3.5, z: 4, f: 0, a: 0, roundId: -1, lastSend: 0, sent: "", useAt: 0, role: "builder", task: null, wait: 0, hitAt: 0, prog: { x: 0, z: 0, at: 0 } };
+const input = { x: 0, y: 0, use: false, tap: false };
+const R = 0.28; // body radius
+const blockedAt = (x, z) => { const L = land(); for (const [ox, oz] of [[-R, -R], [R, -R], [-R, R], [R, R]]) if (solidCh(tileOf(L, Math.floor(x + ox), Math.floor(z + oz)))) return true; return false; };
+function moveBody(e, dx, dz) { if (!blockedAt(e.x + dx, e.z)) e.x += dx; if (!blockedAt(e.x, e.z + dz)) e.z += dz; }
+const act = (type, m = {}) => { const msg = { ...m, px: +me.x.toFixed(2), pz: +me.z.toFixed(2) }; if (isHost()) applyIntent(type, msg, net.sessionId); else net.send(type, msg); };
+/** What USE would do right now, where I stand: { label, run } or null. */
+function useHere(g) {
+  if (!g || (g.phase !== "run" && g.phase !== "ready")) return null;
+  const h = handOf(net.sessionId), L = land(), t = Date.now(), at = (k) => { const w = wagonAt(g, k, t); return Math.hypot(w.x - me.x, w.z - me.z) < 1.7; };
+  if (h.k === "water" && at(0)) return { label: "Cool the engine", run: () => act("cool") };
+  if ((h.k === "wood" || h.k === "stone") && at(1)) return { label: `Load ${h.k} into the crafter`, run: () => act("deposit") };
+  if ((!h.k || (h.k === "track" && h.n < CONFIG.carry)) && g.stash > 0 && at(2)) return { label: "Take track", run: () => act("take") };
+  if (h.k === "track") {
+    const spot = layable(g, L).map((s) => ({ ...s, d: Math.hypot(s.x + 0.5 - me.x, s.z + 0.5 - me.z) })).filter((s) => s.d < CONFIG.reach).sort((a, b) => a.d - b.d)[0];
+    if (spot) return { label: "Lay track", spot, run: () => act("lay", { x: spot.x, z: spot.z }) };
+  }
+  const ft = facing(L, (ch) => ch === "T" || ch === "R");
+  if (ft) return { label: ft.ch === "T" ? "Chop" : "Mine", hit: true, run: () => act("hit", { x: ft.x, z: ft.z }) };
+  if (!h.k) { const w = facing(L, (ch) => ch === "W"); if (w) return { label: "Fill your bucket", run: () => act("water", { x: w.x, z: w.z }) }; }
+  return null;
+}
+/** The tile in front of me (or right beside me) that `want` likes. */
+function facing(L, want) {
+  for (const d of [0.65, 1.05, 0.35]) { const x = Math.floor(me.x + Math.cos(me.f) * d), z = Math.floor(me.z + Math.sin(me.f) * d), ch = tileOf(L, x, z); if (want(ch)) return { x, z, ch }; }
+  for (const [dx, dz] of Object.values(STEP)) { const x = Math.floor(me.x + dx * 0.6), z = Math.floor(me.z + dz * 0.6), ch = tileOf(L, x, z); if (want(ch)) return { x, z, ch }; }
+  return null;
+}
+function myTick(dt, g, now) {
+  if (me.roundId !== g.id) { me.roundId = g.id; const s = livePlayers().indexOf(net.sessionId); Object.assign(me, { x: 2.5 + (s % 3) * 1.3, z: g.zs + (s % 2 ? -1.4 : 1.4), f: 0 }); }
+  if (ATTRACT && isHost()) { me.id = net.sessionId; brain(me, dt, Date.now()); publishMe(now, me.a > 0); return; }
+  const az = cam.az, ix = input.x * Math.cos(az) + input.y * Math.sin(az), iz = -input.x * Math.sin(az) + input.y * Math.cos(az), len = Math.hypot(ix, iz);
+  me.moving = len > 0.15;
+  if (me.moving) { const k = Math.min(1, len) / (len || 1); moveBody(me, ix * k * CONFIG.walk * dt, iz * k * CONFIG.walk * dt); me.f = Math.atan2(iz, ix); }
+  pushOffTrain(me, g);
+  const u = useHere(g);
+  if ((input.use || input.tap) && u && now - me.useAt > (u.hit ? CONFIG.hitGapMs : 380)) { me.useAt = now; me.a = 0.25; if (!u.hit) input.use = false; u.run(); }
+  input.tap = false;
+  me.a = Math.max(0, me.a - dt);
+  publishMe(now, me.a > 0);
+}
+/** People don't stand inside the train: step out of its way. */
+function pushOffTrain(e, g) {
+  const t = Date.now();
+  for (let k = 0; k < 3; k++) { const w = wagonAt(g, k, t), dx = e.x - w.x, dz = e.z - w.z, d = Math.hypot(dx, dz); if (d < 0.55 && d > 0.001) moveBody(e, (dx / d) * (0.55 - d), (dz / d) * (0.55 - d)); }
+}
+function publishMe(now, acting) {
+  const p = JSON.stringify({ x: +me.x.toFixed(2), z: +me.z.toFixed(2), f: +me.f.toFixed(2), a: acting ? 1 : 0 });
+  if (p !== me.sent && now - me.lastSend > 80) { me.sent = p; me.lastSend = now; net.me.set("p", p); }
+}
+
+// ── HUD & RESULTS ───────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+let boardApi = null, boardFor = -1, hintUntil = 0, dropped = false;
+function toast(text) { $("toast").textContent = text; $("toast").classList.add("on"); clearTimeout(toast.t); toast.t = setTimeout(() => $("toast").classList.remove("on"), 1600); }
+const tilesRun = (g, t) => g.done + Math.floor(trainDist(g, t));
+function hud(g) {
+  const t = Date.now(), heat = heatOf(g, t), tiles = trackTiles(g).tiles, d = trainDist(g, t), ahead = tiles.length - 1 - d;
+  $("leg").innerHTML = `Station ${g.leg}<small>${tilesRun(g, t)} tiles · ${g.phase === "run" ? `track for ${Math.max(0, ahead).toFixed(0)} more` : g.phase === "ready" ? "get ready" : ""}</small>`;
+  $("heatBar").firstElementChild.style.width = `${heat}%`;
+  $("heatBar").firstElementChild.style.background = heat > 70 ? "#ff5a3a" : heat > 45 ? "#ffb020" : "#52d273";
+  const hot = heat > 70 && g.phase === "run";
+  $("heatLabel").textContent = hot ? "Engine overheating! Water!" : "Engine heat";
+  $("heatLabel").classList.toggle("hot", hot);
+  $("cWood").textContent = `Wood ${g.wood}`; $("cStone").textContent = `Stone ${g.stone}`; $("cTrack").textContent = `Track ${g.stash}`;
+  const u = useHere(g), h = handOf(net.sessionId);
+  $("act").textContent = ATTRACT ? "" : u ? `${touchUI ? "" : "Space: "}${u.label}` : h.k ? `Carrying ${h.n > 1 ? h.n + " " : ""}${h.k}` : "";
+  $("use").textContent = u ? u.label.split(" ")[0].toUpperCase() : "USE";
+  $("count").innerHTML = g.phase === "ready" ? `${Math.max(1, Math.ceil((g.startAt - t) / 1000))}` : g.phase === "run" && t - g.startAt < 900 ? "All aboard!" : g.phase === "station" ? `Station ${g.leg} reached!<br><small style="font-size:.4em">Next leg: a faster train</small>` : "";
+  const n = humans().length;
+  $("net").textContent = ATTRACT ? "" : net.offline ? "Offline: playing with bots" : dropped ? "Reconnecting…" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the train" : ""}`;
+  $("hint").style.opacity = performance.now() < hintUntil ? 1 : 0;
+  $("over").hidden = g.phase !== "over" || ATTRACT;
+  if (g.phase === "over") {
+    const total = tilesRun(g, t);
+    $("overTitle").textContent = g.why === "heat" ? "The engine boiled over!" : "Off the rails!";
+    $("overSub").innerHTML = `${g.leg - 1} station${g.leg === 2 ? "" : "s"} reached · <b>${total} tiles</b>`;
+    $("overNext").textContent = `New run in ${Math.max(0, Math.ceil((g.endsAt - t) / 1000))}s`;
+    if (boardFor !== g.id) { boardFor = g.id; showBoard(total); }
+  }
+}
+function showBoard(score) {
+  const list = $("board");
+  if (!boardApi) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li>Loading…</li>";
+  (score > 0 ? boardApi.submit(score).catch(() => null) : Promise.resolve()).then(() => boardApi.top(10)).then(({ entries }) => {
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li>No runs yet. Set the first.</li>";
+  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+}
+$("again").onclick = () => act("again");
+let audio = null;
+function sfx(freq, len) {
+  if (ATTRACT) return;
+  try {
+    audio = audio || new AudioContext();
+    const o = audio.createOscillator(), gn = audio.createGain(), t = audio.currentTime;
+    o.type = "square"; o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(freq * 0.7, t + len);
+    gn.gain.setValueAtTime(0.03, t); gn.gain.exponentialRampToValueAtTime(0.0001, t + len);
+    o.connect(gn).connect(audio.destination); o.start(t); o.stop(t + len + 0.02);
+  } catch {}
+}
+
+// ── INPUT ───────────────────────────────────────────────────────────────────────────
+const keys = new Set(), touchUI = matchMedia("(pointer: coarse)").matches && !ATTRACT;
+$("use").hidden = !touchUI; document.body.classList.toggle("touch", touchUI);
+addEventListener("keydown", (e) => {
+  const k = e.key.toLowerCase(); if (k === " " || k.startsWith("arrow")) e.preventDefault();
+  if (k === " " || k === "e") { if (!keys.has(k)) input.tap = true; input.use = true; }
+  keys.add(k);
+});
+addEventListener("keyup", (e) => { const k = e.key.toLowerCase(); keys.delete(k); if (k === " " || k === "e") input.use = false; });
+addEventListener("blur", () => { keys.clear(); input.use = false; });
+const stick = { id: null, x: 0, y: 0 }, cv = renderer.domElement;
+function readKeys() {
+  if (stick.id !== null) return;
+  input.x = (keys.has("d") || keys.has("arrowright") ? 1 : 0) - (keys.has("a") || keys.has("arrowleft") ? 1 : 0);
+  input.y = (keys.has("s") || keys.has("arrowdown") ? 1 : 0) - (keys.has("w") || keys.has("arrowup") ? 1 : 0);
+}
+cv.addEventListener("pointerdown", (e) => { e.preventDefault(); if (e.pointerType === "mouse") return; stick.id = e.pointerId; stick.x = e.clientX; stick.y = e.clientY; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointermove", (e) => { if (e.pointerId !== stick.id) return; const dx = e.clientX - stick.x, dy = e.clientY - stick.y, d = Math.hypot(dx, dy); input.x = d > 8 ? dx / Math.max(d, 40) : 0; input.y = d > 8 ? dy / Math.max(d, 40) : 0; });
+for (const ev of ["pointerup", "pointercancel"]) cv.addEventListener(ev, (e) => { if (e.pointerId === stick.id) { stick.id = null; input.x = input.y = 0; } });
+const useBtn = $("use");
+useBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); useBtn.classList.add("on"); input.use = true; input.tap = true; });
+for (const ev of ["pointerup", "pointercancel", "pointerleave"]) useBtn.addEventListener(ev, () => { useBtn.classList.remove("on"); input.use = false; });
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
+function fit() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+addEventListener("resize", fit); addEventListener("orientationchange", fit); fit();
+const cam = { az: 0, x: 8, z: 5.5 };
+/** Follow me (the preview follows the work at the front of the train). On a tall screen the view turns so the line runs up the phone. */
+function placeCamera(g, dt, now) {
+  const tall = innerHeight > innerWidth * 1.1; cam.az = tall ? -Math.PI / 2 : 0;
+  let fx = me.x, fz = MD / 2;
+  if (ATTRACT && g) { const e = wagonAt(g, 0, Date.now()), [ex] = trackEnd(g); fx = (e.x + ex) / 2 + 1; }
+  const across = tall ? MD - 0.5 : ATTRACT ? 13 : 20, half = Math.tan((camera.fov * Math.PI) / 360), dist = across / (2 * half * camera.aspect);
+  if (tall) fx = Math.max(9, Math.min(MW - 9, fx + 4)); // look a little ahead of me, up the phone
+  else fx = Math.max(across / 2 - 1, Math.min(MW - across / 2 + 1, fx));
+  if (tall) fz = MD / 2;
+  const k = 1 - Math.pow(0.05, dt); cam.x += (fx - cam.x) * k; cam.z += (fz - cam.z) * k;
+  const elev = ATTRACT ? 0.82 : 0.95, sway = ATTRACT ? Math.sin(now / 2600) * 0.12 : 0, a = cam.az + sway;
+  camera.position.set(cam.x + Math.sin(a) * Math.cos(elev) * dist, Math.sin(elev) * dist, cam.z + Math.cos(a) * Math.cos(elev) * dist);
+  camera.lookAt(cam.x, 0, cam.z);
+  sun.position.set(cam.x - 8, 18, cam.z + 10); sun.target.position.set(cam.x, 0, cam.z);
+}
+/** The room's state can arrive just after we join: if someone (or a bot) already had my color, take a free one. */
+function fixColor() {
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId), bots = botList();
+  if (!others.some(([id, p]) => p.c === myColor && id < net.sessionId) && !bots.some((b) => b.c === myColor)) return;
+  const taken = new Set([...others.map(([, p]) => p.c), ...bots.map((b) => b.c)]);
+  myColor = COLORS.find((c) => !taken.has(c)) || myColor; net.me.set("c", myColor);
+  const mine = crew.get(net.sessionId); if (mine) { scene.remove(mine.g); crew.delete(net.sessionId); }
+}
+function drawWorld(g, dt, now) {
+  const L = land(), t = Date.now();
+  buildLand(L, g); buildTrack(g);
+  // the train
+  const heat = heatOf(g, t), over = g.phase === "over";
+  trainParts.forEach((w, k) => {
+    const p = wagonAt(g, k, t), d = trainDist(g, t) - k * WAGON_GAP, tiles = trackTiles(g).tiles, off = d > tiles.length - 1 ? d - (tiles.length - 1) : 0;
+    w.g.position.set(p.x, 0.02, p.z); w.g.rotation.y = -p.a;
+    w.inner.rotation.x = over && g.why === "derail" ? Math.min(1.2, off * 2) : 0; w.inner.position.y = g.phase === "run" ? Math.abs(Math.sin(now / 120 + k)) * 0.02 : 0;
+  });
+  heatGlow.material.opacity = heat > 40 ? ((heat - 40) / 60) * (0.5 + 0.3 * Math.sin(now / 90)) : 0;
+  if (g.phase === "run" && Math.random() < 0.25) { const e = wagonAt(g, 0, t); burst(e.x + Math.cos(e.a) * 0.36, 1.5, e.z + Math.sin(e.a) * 0.36, heat > 70 ? "#555" : "#f4f4f4", 1, 0.3, 0.22, 1.2, -0.6); }
+  if (over && g.why === "heat" && Math.random() < 0.5) { const e = wagonAt(g, 0, t); burst(e.x, 1.2, e.z, Math.random() < 0.5 ? "#ff7a1a" : "#333", 2, 1.5, 0.25, 1, -1); }
+  cargo.wood.forEach((m, i) => (m.visible = i < g.wood)); cargo.stone.forEach((m, i) => (m.visible = i < g.stone)); cargo.track.forEach((m, i) => (m.visible = i < g.stash));
+  gear.rotation.z = g.craftAt ? now / 150 : 0; gear.visible = !!g.craftAt;
+  // where my next piece of track would go
+  const u = !ATTRACT && useHere(g);
+  ghost.visible = !!(u && u.spot); if (ghost.visible) { ghost.position.set(u.spot.x + 0.5, 0.06, u.spot.z + 0.5); ghost.material.opacity = 0.4 + Math.sin(now / 150) * 0.2; }
+  // the crew: me, the other players (eased), the bots
+  const seen = new Set(), live = new Set(livePlayers());
+  const show = (id, color, name, x, z, f, a, moving) => { let p = crew.get(id); if (!p) { p = makePerson(color, name); crew.set(id, p); } seen.add(id); placePerson(p, x, z, f, a, moving, id === net.sessionId ? 1 : dt, now); showLoad(p, handOf(id)); };
+  show(net.sessionId, myColor, "", me.x, me.z, me.f, me.a > 0, me.moving);
+  for (const [id, p] of Object.entries(S.entities.players || {})) { if (id === net.sessionId || !live.has(id)) continue; const q = parse(p.p, null); if (q) { const c = crew.get(id); show(id, p.c || "#ccc", p.n || "Player", q.x, q.z, q.f, !!q.a, !!c && Math.hypot(q.x - c.x, q.z - c.z) > 0.05); } }
+  for (const b of botList()) { const c = crew.get(b.i); show(b.i, b.c, ATTRACT ? "" : b.n, b.x, b.z, b.f, !!b.a, !!c && Math.hypot(b.x - c.x, b.z - c.z) > 0.04); }
+  for (const [id, p] of crew) if (!seen.has(id)) { scene.remove(p.g); crew.delete(id); }
+}
+let last = performance.now(), lastHb = 0, lastHud = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  const realNow = performance.now(); // timed on the real clock: after a long freeze the rAF time can be from before the wake
+  if (lastFrameAt && realNow - lastFrameAt > 1000) { wakeHold = realNow + 700; host.wasHost = false; } lastFrameAt = realNow; // woke from a freeze or a background tab: another player may have run the train meanwhile, so let their state arrive, then adopt it like a new host
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now; // never negative: the first frame can be stamped before `last`
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
+  readKeys();
+  if (isHost()) hostTick(dt, now); else host.wasHost = false;
+  const g = game();
+  if (g && land().length === MW * MD) {
+    myTick(dt, g, realNow);
+    drawWorld(g, dt, now);
+    if (now - lastHud > 120) { lastHud = now; hud(g); }
+  }
+  placeCamera(g, dt, now);
+  partsTick(dt);
+  renderer.render(scene, camera);
+}
+
+(async function start() {
+  document.body.classList.toggle("attract", ATTRACT);
+  if (ATTRACT) CONFIG.seats = 3;
+  net = await connect();
+  net.onState((st) => { S = st; });
+  for (const type of ["hit", "water", "deposit", "cool", "take", "lay", "again"]) net.on(type, (m, from) => { if (isHost()) applyIntent(type, m || {}, from); });
+  net.on("fx", (m) => showFx(m));
+  net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { dropped = false; });
+  if (!net.offline && typeof MP !== "undefined") boardApi = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
+  const taken = new Set([...Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c), ...parse(S.shared.bots, []).map((b) => b.c)]);
+  myColor = COLORS.find((c) => !taken.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
+  net.me.set({ n: myName, c: myColor, hb: Date.now() });
+  $("hint").textContent = touchUI ? "Drag to walk, hold USE to chop trees and mine rocks. Load them into the green wagon, grab the track it makes and lay it ahead of the train. Water cools the engine!"
+    : "WASD to walk, hold Space to chop trees and mine rocks. Load them into the green wagon, grab the track it makes and lay it ahead of the train. Water cools the engine!";
+  hintUntil = performance.now() + 15000;
+  if (QS.has("test")) window.__test = { game, land, hands, handOf, me, useHere, trainDist, heatOf, trackTiles, layable, host, isHost, act, input }; // for automated tests only
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

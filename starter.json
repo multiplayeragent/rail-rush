@@ -1,0 +1,21 @@
+{
+  "name": "Rail Rush",
+  "genre": "sim",
+  "dim": "3D",
+  "mode": "Co-op",
+  "players": "1–4",
+  "hook": "The train never stops. Lay the track ahead of it.",
+  "how": "Chop trees and mine rocks, load them into the crafter wagon and grab the track it makes. Lay it ahead of the train to reach the next station, and bring water before the engine boils over. Every station, the train gets faster.",
+  "controls": "WASD to walk, hold Space to chop, mine, load, lay and pour; on a phone: drag to walk, hold USE",
+  "uses": [
+    ["Host-run rules", "The host's browser runs the train, the land, the crafter and the heat; if it leaves, the next player takes over."],
+    ["Leaderboard", "How many tiles your train travels before it stops."],
+    ["Bots", "A lumberjack, a miner and a builder bot help until enough people join."],
+    ["Live sync", "Everyone sees the same train, the same land and every tree as it falls."]
+  ],
+  "ideas": [
+    "Add a bridge piece that crosses water but costs double",
+    "Make it a snowy map where the engine freezes instead of overheating",
+    "Add a dynamite wagon that clears rocks in one go"
+  ]
+}
