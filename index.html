@@ -32,6 +32,7 @@
   .card h2 { margin: 0 0 4px; font-size: 23px; } .card h3 { margin: 12px 0 4px; font-size: 14px; color: #ffd23f; }
   .card p { margin: 4px 0; font-size: 14px; opacity: .9; }
   .card ol { text-align: left; margin: 0 0 12px; padding-left: 26px; font-size: 14px; min-height: 40px; } .card li span { float: right; font-variant-numeric: tabular-nums; }
+  .card li.note { list-style: none; opacity: .8; }
   button.go { width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #ffd23f; color: #3a2400; font: 800 17px system-ui, sans-serif; cursor: pointer; }
   #use { position: fixed; right: max(18px, env(safe-area-inset-right)); bottom: max(22px, env(safe-area-inset-bottom)); width: 96px; height: 96px; border-radius: 50%;
          border: 2px solid #ffffffaa; background: #2a223866; color: #fff; font: 800 15px system-ui, sans-serif; touch-action: none; }
@@ -56,7 +57,7 @@
 <button id="use" hidden>USE</button>
 <div id="over" hidden><div class="card">
   <h2 id="overTitle"></h2><p id="overSub"></p>
-  <h3>Longest runs (tiles)</h3><ol id="board"><li>Loading…</li></ol>
+  <h3>Longest runs (tiles)</h3><ol id="board"><li class="note">Loading…</li></ol>
   <button class="go" id="again">Play again</button><p id="overNext"></p>
 </div></div>
 <script type="module">
@@ -343,7 +344,15 @@ function hostTick(dt, now) {
 }
 
 // ── BOTS (HOST) ─────────────────────────────────────────────────────────────────────
-const spawnSpot = (n) => { const g = host.g, zs = g ? g.zs : 5; return { x: 3.5 + (n % 3) * 1.4, z: zs + (n % 2 ? 1.5 : -1.5), f: 0 }; };
+const spawnSpot = (n) => { const g = host.g, zs = g ? g.zs : 5; return { ...clearSpot(host.land, 3.5 + (n % 3) * 1.4, zs + (n % 2 ? 1.5 : -1.5)), f: 0 }; };
+/** The nearest spot to (x, z) where a body fits: a new map can put a tree or rock right on a start spot (you'd be stuck inside it). */
+function clearSpot(L, x, z) {
+  const fits = (px, pz) => [[-R, -R], [R, -R], [-R, R], [R, R]].every(([ox, oz]) => !solidCh(tileOf(L, Math.floor(px + ox), Math.floor(pz + oz))));
+  if (fits(x, z)) return { x, z };
+  let best = null, bd = 1e9;
+  for (let dz = -5; dz <= 5; dz++) for (let dx = -5; dx <= 5; dx++) { const px = Math.floor(x) + dx + 0.5, pz = Math.floor(z) + dz + 0.5, d = Math.hypot(px - x, pz - z); if (d < bd && fits(px, pz)) { bd = d; best = { x: px, z: pz }; } }
+  return best || { x, z };
+}
 function newBot(id, n, c, role, x, z, slot) { return { id, n, c, role, x, z, f: 0, a: 0, slot, task: null, wait: 0, hitAt: 0, prog: { x, z, at: 0 } }; }
 const isBrain = (id) => host.bots.has(id) || (ATTRACT && id === net.sessionId);
 function botsTick(dt, t) {
@@ -383,6 +392,7 @@ function plannedPath(g, landStr) {
 function brain(b, dt, t) {
   const g = host.g, L = host.land, h = handOf(b.id);
   b.a = Math.max(0, b.a - dt); b.moving = false;
+  if (blockedAt(b.x, b.z)) Object.assign(b, clearSpot(L, b.x, b.z)); // stuck inside a tree or rock: step out
   if (b.wait > 0) { b.wait -= dt; return; }
   const act = (type, m = {}) => { applyIntent(type, { ...m, px: b.x, pz: b.z }, b.id); };
   const heat = heatOf(g, t), engine = wagonAt(g, 0, t);
@@ -390,7 +400,8 @@ function brain(b, dt, t) {
   if (h.k === "water") { if (goNear(b, engine.x, engine.z, 1.6, dt)) { act("cool"); b.wait = 0.3; } return; }
   // the engine is getting hot and nobody has water: fetch some (builders first)
   const fetching = [...host.bots.values(), me].some((o) => o !== b && (handOf(o.id || net.sessionId).k === "water" || (o.task && o.task.water)));
-  if (heat > 55 && !fetching && !h.k && (b.role === "builder" || heat > 75)) {
+  const builderFree = [...host.bots.values()].some((o) => o.role === "builder" && !handOf(o.id).k); // a builder still holding track (say the line already reaches the station) can't fetch water
+  if (heat > 55 && !fetching && !h.k && (b.role === "builder" || heat > 75 || !builderFree)) {
     const w = nearestTile(b, (ch) => ch === "W");
     if (w) { b.task = { water: true }; if (goNear(b, w.x + 0.5, w.z + 0.5, 1.2, dt, true)) { act("water", { x: w.x, z: w.z }); b.task = null; b.wait = 0.3; } return; }
   }
@@ -595,8 +606,12 @@ function showLoad(p, h) {
   for (let i = 0; i < h.n; i++) mesh(new THREE.BoxGeometry(L[0], L[1], L[2]), mat(h.k === "track" && i % 2 ? "#8a5a32" : L[3]), 0, i * (L[1] + 0.02), 0, p.load);
 }
 function placePerson(p, x, z, f, acting, moving, dt, now) {
-  if (p.fresh) { p.x = x; p.z = z; p.f = f; p.fresh = false; }
-  const k = 1 - Math.pow(0.0008, dt); p.x += (x - p.x) * k; p.z += (z - p.z) * k; p.f += Math.atan2(Math.sin(f - p.f), Math.cos(f - p.f)) * k;
+  if (p.fresh) { p.x = p.tx = x; p.z = p.tz = z; p.f = f; p.at = now; p.spd = 0; p.fresh = false; }
+  // others walk toward their last reported spot at the pace they really go (from the last two reports): an even glide, not a surge per update
+  if (x !== p.tx || z !== p.tz) { const gap = Math.max(0.05, Math.min(0.5, (now - p.at) / 1000)); p.spd = Math.hypot(x - p.tx, z - p.tz) / gap; p.tx = x; p.tz = z; p.at = now; }
+  const dx = x - p.x, dz = z - p.z, d = Math.hypot(dx, dz), k = 1 - Math.pow(0.0008, dt);
+  if (dt >= 1 || d > 3) { p.x = x; p.z = z; } else if (d > 1e-4) { const s = Math.min(d, Math.max(p.spd * 1.1, d * 3) * dt); p.x += (dx / d) * s; p.z += (dz / d) * s; }
+  p.f += Math.atan2(Math.sin(f - p.f), Math.cos(f - p.f)) * k;
   p.g.position.set(p.x, 0, p.z); p.g.rotation.y = Math.PI / 2 - p.f;
   const w = moving ? Math.sin(now / 90) : 0; p.legs[0].rotation.x = w * 0.6; p.legs[1].rotation.x = -w * 0.6; p.body.position.y = Math.abs(w) * 0.04;
   p.arm.rotation.x = acting ? -1.6 + Math.abs(Math.sin(now / 70)) * 1.8 : p.loadKey ? -1.2 : w * 0.5;
@@ -660,10 +675,11 @@ function facing(L, want) {
   return null;
 }
 function myTick(dt, g, now) {
-  if (me.roundId !== g.id) { me.roundId = g.id; const s = livePlayers().indexOf(net.sessionId); Object.assign(me, { x: 2.5 + (s % 3) * 1.3, z: g.zs + (s % 2 ? -1.4 : 1.4), f: 0 }); }
+  if (me.roundId !== g.id) { me.roundId = g.id; const s = livePlayers().indexOf(net.sessionId); Object.assign(me, clearSpot(land(), 2.5 + (s % 3) * 1.3, g.zs + (s % 2 ? -1.4 : 1.4)), { f: 0 }); }
   if (ATTRACT && isHost()) { me.id = net.sessionId; brain(me, dt, Date.now()); publishMe(now, me.a > 0); return; }
+  if (blockedAt(me.x, me.z)) Object.assign(me, clearSpot(land(), me.x, me.z)); // inside a tree or rock (the new map arrived after I was placed): step out
   const az = cam.az, ix = input.x * Math.cos(az) + input.y * Math.sin(az), iz = -input.x * Math.sin(az) + input.y * Math.cos(az), len = Math.hypot(ix, iz);
-  me.moving = len > 0.15;
+  me.moving = len > 0.15 && g.phase !== "over"; // no walking about behind the results card
   if (me.moving) { const k = Math.min(1, len) / (len || 1); moveBody(me, ix * k * CONFIG.walk * dt, iz * k * CONFIG.walk * dt); me.f = Math.atan2(iz, ix); }
   pushOffTrain(me, g);
   const u = useHere(g);
@@ -690,7 +706,7 @@ function toast(text) { $("toast").textContent = text; $("toast").classList.add("
 const tilesRun = (g, t) => g.done + Math.floor(trainDist(g, t));
 function hud(g) {
   const t = Date.now(), heat = heatOf(g, t), tiles = trackTiles(g).tiles, d = trainDist(g, t), ahead = tiles.length - 1 - d;
-  $("leg").innerHTML = `Station ${g.leg}<small>${tilesRun(g, t)} tiles · ${g.phase === "run" ? `track for ${Math.max(0, ahead).toFixed(0)} more` : g.phase === "ready" ? "get ready" : ""}</small>`;
+  $("leg").innerHTML = `Station ${g.leg}<small>${tilesRun(g, t)} tiles${g.phase === "run" ? ` · track for ${Math.max(0, ahead).toFixed(0)} more` : g.phase === "ready" ? " · get ready" : ""}</small>`;
   $("heatBar").firstElementChild.style.width = `${heat}%`;
   $("heatBar").firstElementChild.style.background = heat > 70 ? "#ff5a3a" : heat > 45 ? "#ffb020" : "#52d273";
   const hot = heat > 70 && g.phase === "run";
@@ -715,11 +731,11 @@ function hud(g) {
 }
 function showBoard(score) {
   const list = $("board");
-  if (!boardApi) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
-  list.innerHTML = "<li>Loading…</li>";
+  if (!boardApi) { list.innerHTML = `<li class="note">Leaderboards need a connection.</li>`; return; } // status lines are "note"s: not numbered like entries
+  list.innerHTML = `<li class="note">Loading…</li>`;
   (score > 0 ? boardApi.submit(score).catch(() => null) : Promise.resolve()).then(() => boardApi.top(10)).then(({ entries }) => {
-    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li>No runs yet. Set the first.</li>";
-  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : `<li class="note">No runs yet. Set the first.</li>`;
+  }).catch(() => { list.innerHTML = `<li class="note">Couldn't load the leaderboard.</li>`; });
 }
 $("again").onclick = () => act("again");
 let audio = null;
